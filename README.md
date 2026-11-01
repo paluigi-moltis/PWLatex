@@ -45,6 +45,43 @@ Multi-file projects (`\input`, `\include`) and BibTeX (when a `.bib` file is
 present) are supported — all cached files are handed to the engine on every
 compile.
 
+### Citation search & insertion (Phase 2)
+
+1. Press **Ctrl/Cmd+Shift+C** (or the **References** toolbar button) with a
+   project open.
+2. Type a query — results appear after a 350 ms debounce from **OpenAlex**
+   or **Crossref** (toggle providers in the modal). Both APIs are queried
+   directly from the browser; nothing is proxied through a server.
+3. Click **Insert** on a result:
+   - `\cite{Key}` is inserted at the editor cursor;
+   - the BibTeX entry is appended to the project's `.bib` file — the one the
+     main document references (`\bibliography{…}` / `\addbibresource{…}`),
+     else `references.bib`/`refs.bib`, else any `.bib`; if none exists a new
+     `references.bib` is created in the root (duplicate keys are never
+     appended twice);
+   - if the main document has no bibliography command at all,
+     `\bibliographystyle{plain}` + `\bibliography{references}` are wired in
+     before `\end{document}` so the reference actually renders;
+   - all touched files are written back to disk and the project recompiles.
+
+Citation keys follow `FirstAuthorLastNameYearFirstSignificantWord`
+(e.g. `He2016Deep` for He et al., *Deep Residual Learning for Image
+Recognition*), sanitized to ASCII alphanumerics. BibTeX entries are built
+directly from the normalized API metadata — no `doi.org` redirects (which
+would fail CORS in the browser).
+
+> Browser note: on Chrome, `Ctrl+Shift+C` may be reserved for DevTools; the
+> toolbar button always works.
+
+### Project portability (Phase 2)
+
+- **Export ZIP** packs every cached file (sources and binary assets, relative
+  paths preserved) via JSZip entirely in the browser and downloads
+  `${projectName}.zip`.
+- **Import ZIP** unpacks a chosen `.zip` into an **empty** local folder (you
+  pick it with the native directory picker), writes every entry to disk, then
+  loads the folder into the editor and compiles its main document.
+
 ## Architecture
 
 ```
@@ -60,6 +97,13 @@ compile.
 │ Map<path, {content, handle,  │   │ Web Worker) +        │
 │ isBinary}>  ·  FS Access API │   │ PdfLatex             │
 └──────────────────────────────┘   └──────────────────────┘
+        ▲                   ▲                        ▲
+        │ cite insert +     │ \cite{key} at cursor   │ auto-recompile
+        │ .bib append/create │                        │
+┌───────┴───────────────────┴────────────────────────┴───┐
+│ src/lib/references.ts (OpenAlex/Crossref → AcademicPaper│
+│ → paperToBibTeX)  ·  citations.ts  ·  zipService.ts    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 Two architectural invariants, kept for future AI & citation extensions:
@@ -73,8 +117,11 @@ Two architectural invariants, kept for future AI & citation extensions:
    LLM context builders a synchronous query surface over the whole project.
 
 A dev-only bridge (`window.__pwlatex`, `src/lib/debug.ts`) exposes these
-modules for E2E tests and tooling experiments; it is never included in
-production builds.
+modules — plus the Phase 2 citation search/insert and ZIP export functions —
+for E2E tests and tooling experiments; it is never included in production
+builds. `seedOpfsProject()` seeds a project into the Origin Private File
+System so tests can run the full open → edit → cite → compile loop without
+the (non-automatable) native directory picker.
 
 ## Data packages
 
