@@ -17,6 +17,9 @@
 import { openProjectFolder, files, activeFilePath, directoryHandle, saveActiveFile } from './fileSystem';
 import { compileProject, ensureEngine, saveAndCompile, compileStatus, engineStatus, pdfUrl } from './compiler';
 import { editorView } from './editorState';
+import { searchPapers, paperToBibTeX } from './references';
+import { insertCitation } from './citations';
+import { exportProjectZip } from './zipService';
 
 /** Recursively remove every entry of an OPFS directory. */
 async function clearOpfsDir(dir: FileSystemDirectoryHandle): Promise<void> {
@@ -56,6 +59,10 @@ export function installDebugHook(): void {
     saveActiveFile,
     saveAndCompile,
     seedOpfsProject,
+    insertCitation, // Phase 2: cursor-level \cite + .bib management
+    searchPapers, // Phase 2: OpenAlex/Crossref search
+    paperToBibTeX, // Phase 2: BibTeX generation
+    exportProjectZip, // Phase 2: project portability (triggers a download)
     // Live state (stores)
     stores: { files, activeFilePath, directoryHandle, compileStatus, engineStatus, pdfUrl },
     editorView,

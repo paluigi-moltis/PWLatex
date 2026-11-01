@@ -3,19 +3,35 @@
    * App.svelte — application shell.
    *
    * 3-column split: FileTree | Editor | PdfViewer, with a toolbar on top and
-   * a collapsible engine-log panel at the bottom. Ctrl/Cmd+S works globally
-   * (the editor's own keymap consumes it while the editor is focused).
+   * a collapsible engine-log panel at the bottom. Global shortcuts:
+   * Ctrl/Cmd+S saves + compiles; Ctrl/Cmd+Shift+C opens the citation search.
    */
   import { openProjectFolder, projectName, directoryHandle, isScanning, fsError } from './lib/fileSystem';
   import { compileProject, saveAndCompile, compileStatus, engineStatus, logText, logErrors, compileError } from './lib/compiler';
+  import { exportProjectZip, importProjectZip } from './lib/zipService';
   import FileTree from './lib/components/FileTree.svelte';
   import Editor from './lib/components/Editor.svelte';
   import PdfViewer from './lib/components/PdfViewer.svelte';
-  import { FolderOpen, Play, LoaderCircle, ChevronDown, ChevronUp, Sigma } from 'lucide-svelte';
+  import CitationModal from './lib/components/CitationModal.svelte';
+  import {
+    Archive, ArchiveRestore, BookOpenText, CircleAlert, FolderOpen, LoaderCircle,
+    ChevronDown, ChevronUp, Play, Sigma, X,
+  } from 'lucide-svelte';
 
   const hasProject = $derived($directoryHandle !== null);
 
   let logOpen = $state(false);
+
+  /** Citation search modal (mounted only while open). */
+  let citationOpen = $state(false);
+
+  /** Which ZIP operation is running, if any. */
+  let portOp = $state<'export' | 'import' | null>(null);
+  const portBusy = $derived(portOp !== null);
+  /** Last portability/citation error surfaced as a dismissible strip. */
+  let actionError = $state<string | null>(null);
+
+  let zipInput: HTMLInputElement | undefined = $state();
 
   // Auto-reveal the log when a compile fails.
   $effect(() => {
@@ -27,6 +43,43 @@
       if (e.defaultPrevented) return; // already handled inside CodeMirror
       e.preventDefault();
       if (hasProject) void saveAndCompile();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      if (hasProject && !citationOpen) citationOpen = true;
+    }
+  }
+
+  async function onExportZip(): Promise<void> {
+    actionError = null;
+    portOp = 'export';
+    try {
+      await exportProjectZip();
+    } catch (err) {
+      actionError = (err as Error).message;
+    } finally {
+      portOp = null;
+    }
+  }
+
+  function onImportZipClick(): void {
+    actionError = null;
+    zipInput?.click();
+  }
+
+  async function onZipChosen(e: Event): Promise<void> {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ''; // allow picking the same file again later
+    if (!file) return;
+    actionError = null;
+    portOp = 'import';
+    try {
+      await importProjectZip(file);
+    } catch (err) {
+      actionError = (err as Error).message;
+    } finally {
+      portOp = null;
     }
   }
 
@@ -58,8 +111,42 @@
           Compile
         {/if}
       </button>
-      <span class="shortcut-hint">Ctrl+S · save + compile</span>
+      <button
+        class="btn"
+        disabled={!hasProject}
+        onclick={() => (citationOpen = true)}
+        title="Search references (Ctrl/Cmd+Shift+C)"
+      >
+        <BookOpenText size={14} />
+        References
+      </button>
+      <button class="btn" disabled={!hasProject || portBusy} onclick={() => void onExportZip()}>
+        {#if portOp === 'export'}
+          <span class="spin"><LoaderCircle size={14} /></span>
+        {:else}
+          <Archive size={14} />
+        {/if}
+        Export ZIP
+      </button>
+      <button class="btn" disabled={portBusy} onclick={onImportZipClick}>
+        {#if portOp === 'import'}
+          <span class="spin"><LoaderCircle size={14} /></span>
+        {:else}
+          <ArchiveRestore size={14} />
+        {/if}
+        Import ZIP
+      </button>
+      <span class="shortcut-hint">Ctrl+S compile · Ctrl+Shift+C cite</span>
     </div>
+    <input
+      type="file"
+      accept=".zip,application/zip,application/x-zip-compressed"
+      hidden
+      bind:this={zipInput}
+      onchange={(e) => void onZipChosen(e)}
+      aria-hidden="true"
+      tabindex={-1}
+    />
 
     <div class="status">
       {#if $compileStatus === 'ok'}
@@ -71,6 +158,16 @@
       {/if}
     </div>
   </header>
+
+  {#if actionError}
+    <div class="action-error" role="alert">
+      <CircleAlert size={13} />
+      <span class="msg">{actionError}</span>
+      <button class="dismiss" onclick={() => (actionError = null)} aria-label="Dismiss">
+        <X size={12} />
+      </button>
+    </div>
+  {/if}
 
   {#if hasProject}
     <main class="split">
@@ -100,11 +197,17 @@
         {/if}
         <ul class="facts">
           <li>Multi-file projects with <code>\input</code>/<code>\include</code> and BibTeX</li>
+          <li>Search &amp; insert citations from OpenAlex and Crossref (<code>Ctrl+Shift+C</code>)</li>
+          <li>Export / import whole projects as <code>.zip</code> — nothing ever leaves your machine</li>
           <li>CodeMirror 6 editor with LaTeX highlighting</li>
           <li>Real <code>pdflatex</code> in a Web Worker — first run downloads ~200&nbsp;MB of TeX Live, cached by the browser</li>
         </ul>
       </div>
     </main>
+  {/if}
+
+  {#if citationOpen}
+    <CitationModal onclose={() => (citationOpen = false)} />
   {/if}
 
   {#if logOpen && ($logText || $logErrors.length > 0)}
@@ -265,6 +368,36 @@
   .pill.busy {
     background: var(--accent-dim);
     color: var(--accent);
+  }
+
+  .action-error {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 14px;
+    border-bottom: 1px solid rgba(248, 113, 113, 0.35);
+    background: rgba(248, 113, 113, 0.08);
+    color: var(--error);
+    font-size: 12.5px;
+    flex-shrink: 0;
+  }
+
+  .action-error .msg {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .action-error .dismiss {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    color: var(--error);
+  }
+
+  .action-error .dismiss:hover {
+    background: rgba(248, 113, 113, 0.15);
   }
 
   main.split {

@@ -296,3 +296,53 @@ export async function saveActiveFile(content?: string): Promise<string | null> {
   await saveFile(path, content);
   return path;
 }
+
+// ---------------------------------------------------------------------------
+// Creating files
+// ---------------------------------------------------------------------------
+
+/** Walk (creating as needed) to the directory holding `path`, return its handle. */
+async function ensureParentDir(root: FileSystemDirectoryHandle, path: string): Promise<FileSystemDirectoryHandle> {
+  const segments = path.split('/').filter(Boolean);
+  segments.pop(); // drop the file name
+  let dir = root;
+  for (const segment of segments) {
+    dir = await dir.getDirectoryHandle(segment, { create: true });
+  }
+  return dir;
+}
+
+/**
+ * Create a new file on disk (with any missing parent directories), write
+ * `content` to it, and register it in the in-memory cache / file tree.
+ * Throws if a project folder is not open or the disk write fails.
+ */
+export async function createFile(path: string, content: string | Uint8Array): Promise<ProjectFile> {
+  const root = get(directoryHandle);
+  if (!root) throw new Error('createFile: no project folder is open');
+
+  const normalized = normalizePath(path);
+  const name = normalized.split('/').pop()!;
+  const dir = await ensureParentDir(root, normalized);
+  const handle = await dir.getFileHandle(name, { create: true });
+
+  const writable = await handle.createWritable();
+  // TS 5.7+: Uint8Array<ArrayBufferLike> isn't assignable to write()'s chunk
+  // type; copy into a plain-ArrayBuffer view (same trick as compiler.ts).
+  await writable.write(typeof content === 'string' ? content : new Uint8Array(content));
+  await writable.close();
+
+  const record: ProjectFile = {
+    path: normalized,
+    name,
+    content,
+    handle,
+    isBinary: content instanceof Uint8Array,
+    dirty: false,
+  };
+  files.update((map) => {
+    map.set(normalized, record);
+    return new Map(map); // new reference so derived stores (file tree) re-run
+  });
+  return record;
+}
