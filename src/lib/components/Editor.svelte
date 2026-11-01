@@ -124,7 +124,12 @@
   /** Swap the visible document without unmounting the view. */
   function swapTo(path: string | null, content: string): void {
     if (!view) return;
-    if (currentPath && currentPath !== path && view.state.doc.toString() !== '') {
+    // Never save when switching TO "no file": during a project re-open the
+    // reconcile effect runs with path=null before the scan finishes, and
+    // saving then would re-pollute docStates (already cleared by the
+    // directory-change effect) with the previous project's buffer — which
+    // would resurrect stale content the next time a same-named file opens.
+    if (path !== null && currentPath && currentPath !== path && view.state.doc.toString() !== '') {
       docStates.set(currentPath, view.state);
     }
     currentPath = path;
