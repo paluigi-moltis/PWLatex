@@ -19,6 +19,8 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.6",
     "@lezer/highlight": "^1.2.5",
+    "@types/jszip": "^3.4.0",
+    "jszip": "^3.10.2",
     "lucide-svelte": "^0.545.0",
     "texlyre-busytex": "^1.4.1"
   },
